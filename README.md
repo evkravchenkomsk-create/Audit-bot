@@ -12,7 +12,7 @@
 
 ## Шаг 4: Добавьте переменную окружения
 В настройках сервиса → Variables → добавьте:
-  BOT_TOKEN = 8772089364:AAHCKSLK16IP6v-8clvoB5yZniG-YzysYg8
+  BOT_TOKEN = 8737173571:AAEtmDM5YnOgEzL498XlkxOkqMkKV5VarGQ
 
 ## Шаг 5: Deploy
 Railway запустит бота автоматически. Готово!
