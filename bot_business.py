@@ -319,9 +319,9 @@ async def cb_project(cb: CallbackQuery):
 
 @router.callback_query(F.data.startswith("rpt_"))
 async def cb_report(cb: CallbackQuery, bot: Bot):
-    parts = cb.data.split("_")
-    project_key = parts[1]
-    days = int(parts[2])
+    _, rest = cb.data.split("_", 1)
+    project_key, days_str = rest.rsplit("_", 1)
+    days = int(days_str)
 
     user_projects = db.get_user_projects(cb.from_user.id)
     if project_key not in user_projects and not db.is_owner(cb.from_user.id):
