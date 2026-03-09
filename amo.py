@@ -23,6 +23,8 @@ class AmoClient:
                 headers=self.headers,
                 params=params or {}
             ) as r:
+                if r.status == 204:
+                    return {}
                 return await r.json()
 
     async def get_leads_page(self, page: int = 1, limit: int = 250, params: dict = None) -> list:
@@ -59,6 +61,7 @@ def build_report(leads: list, project_cfg: dict, period_label: str) -> str:
     status_map = project_cfg["status_map"]
     won = project_cfg["won_statuses"]
     lost = project_cfg["lost_statuses"]
+    meetings = project_cfg.get("meeting_statuses", [])
     emoji = project_cfg["emoji"]
     name = project_cfg["name"]
 
@@ -66,59 +69,50 @@ def build_report(leads: list, project_cfg: dict, period_label: str) -> str:
     if total == 0:
         return f"{emoji} <b>{name}</b>\n📭 Нет заявок за период"
 
-    # Воронка
-    pipeline = defaultdict(int)
-    for l in leads:
-        status = status_map.get(l["status_id"], f"Статус {l['status_id']}")
-        pipeline[status] += 1
-
     won_deals = [l for l in leads if l["status_id"] in won]
     lost_deals = [l for l in leads if l["status_id"] in lost]
+    meeting_deals = [l for l in leads if l["status_id"] in meetings]
     revenue = sum(l.get("price") or 0 for l in won_deals)
-
-    # Менеджеры
-    mgr_stats = defaultdict(lambda: {"total": 0, "won": 0, "lost": 0})
-    for l in leads:
-        tags = l.get("_embedded", {}).get("tags", [])
-        mgr = get_manager(tags)
-        mgr_stats[mgr]["total"] += 1
-        if l["status_id"] in won:
-            mgr_stats[mgr]["won"] += 1
-        if l["status_id"] in lost:
-            mgr_stats[mgr]["lost"] += 1
 
     conv = round(len(won_deals) / total * 100, 1) if total else 0
 
     lines = [
         f"{emoji} <b>{name}</b> — {period_label}",
-        f"{'─' * 30}",
-        f"📥 Всего заявок: <b>{total}</b>",
-        f"✅ Продажи: <b>{len(won_deals)}</b> ({conv}%)",
+        f"{'─' * 28}",
+        f"📥 Создано заявок: <b>{total}</b>",
+        f"✅ Продажи (Деньги в кассе): <b>{len(won_deals)}</b> ({conv}%)",
+        f"📅 Назначено встреч: <b>{len(meeting_deals)}</b>",
         f"❌ Отказы: <b>{len(lost_deals)}</b> ({round(len(lost_deals)/total*100,1)}%)",
     ]
     if revenue:
         lines.append(f"💰 Выручка: <b>{revenue:,} сом</b>")
 
-    # Воронка (топ статусы)
-    lines.append(f"\n<b>Воронка:</b>")
+    # Воронка — распределение по статусам
+    pipeline = defaultdict(int)
+    for l in leads:
+        status = status_map.get(l["status_id"], f"#{l['status_id']}")
+        pipeline[status] += 1
+
     FUNNEL_ORDER = [
         "Неразобранное", "Физ лица", "Первый контакт",
         "Вышли на ЛПР", "Назначено демо", "Демо проведено",
         "Принимают решение", "Деньги в кассе",
-        "Мотивированный отказ", "Успешно реализовано",
+        "Партнёры", "Мотивированный отказ", "Успешно реализовано",
+        "Закрыто / не реализовано",
     ]
+    funnel_lines = []
     for status in FUNNEL_ORDER:
         count = pipeline.get(status, 0)
         if count > 0:
-            pct = round(count / total * 100)
-            lines.append(f"  {status}: {count} ({pct}%)")
+            funnel_lines.append(f"  {status}: {count}")
+    # Неизвестные статусы
+    for status, count in pipeline.items():
+        if status not in FUNNEL_ORDER:
+            funnel_lines.append(f"  {status}: {count}")
 
-    # Менеджеры
-    if mgr_stats:
-        lines.append(f"\n<b>Менеджеры:</b>")
-        for mgr, s in sorted(mgr_stats.items()):
-            c = round(s["won"] / s["total"] * 100, 1) if s["total"] else 0
-            lines.append(f"  👤 {mgr}: {s['total']} заявок, {s['won']} продаж ({c}%)")
+    if funnel_lines:
+        lines.append(f"\n<b>По статусам:</b>")
+        lines.extend(funnel_lines)
 
     return "\n".join(lines)
 

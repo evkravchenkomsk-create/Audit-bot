@@ -32,6 +32,7 @@ PROJECTS = {
         },
         "won_statuses": [83450798, 142],
         "lost_statuses": [83450806, 143],
+        "meeting_statuses": [83450590],
     },
     "a_farm": {
         "name": "А-Фарм",
