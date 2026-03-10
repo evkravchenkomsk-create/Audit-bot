@@ -86,7 +86,7 @@ def kb_select_projects(user_id: int, selected: list = None):
         check = "✅" if key in selected else "⬜"
         rows.append([InlineKeyboardButton(
             text=f"{check} {cfg['emoji']} {cfg['name']}",
-            callback_data=f"toggleproj_{user_id}_{key}_{'|'.join(selected)}"
+            callback_data=f"toggleproj_{user_id}:{key}:{'|'.join(selected)}"
         )])
     rows.append([InlineKeyboardButton(
         text="💾 Сохранить и одобрить",
@@ -228,10 +228,10 @@ async def cb_approve(cb: CallbackQuery):
 
 @router.callback_query(F.data.startswith("toggleproj_"))
 async def cb_toggle_project(cb: CallbackQuery):
-    parts = cb.data.split("_", 3)
-    user_id = int(parts[1])
-    project_key = parts[2]
-    current = parts[3].split("|") if parts[3] else []
+    rest = cb.data[len("toggleproj_"):]
+    uid_str, project_key, selected_str = rest.split(":", 2)
+    user_id = int(uid_str)
+    current = [p for p in selected_str.split("|") if p]
 
     if project_key in current:
         current.remove(project_key)
