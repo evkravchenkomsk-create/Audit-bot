@@ -265,18 +265,45 @@ async def cb_save_approve(cb: CallbackQuery, bot: Bot):
     project_names = [f"{PROJECTS[p]['emoji']} {PROJECTS[p]['name']}" for p in projects if p in PROJECTS]
 
     await cb.message.edit_text(
-        f"✅ Пользователь <b>{user['full_name'] if user else user_id}</b> одобрен\n"
-        f"Проекты: {', '.join(project_names)}"
+        f"✅ <b>{user['full_name'] if user else user_id}</b>\n"
+        f"Проекты: {', '.join(project_names)}\n\n"
+        f"Что дальше?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 Забрать доступ", callback_data=f"revoke_{user_id}")],
+            [InlineKeyboardButton(text="👥 К списку", callback_data="manage_users")],
+        ])
     )
 
     try:
         await bot.send_message(
             user_id,
-            f"🎉 <b>Доступ открыт!</b>\n\n"
-            f"Вам выдан доступ к проектам:\n"
-            f"{chr(10).join(project_names)}\n\n"
+            f"✅ <b>Ваши доступы обновлены</b>\n\n"
+            f"Проекты: {', '.join(project_names)}\n\n"
             f"Нажмите /start для начала работы."
         )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("revoke_"))
+async def cb_revoke(cb: CallbackQuery, bot: Bot):
+    if not db.is_owner(cb.from_user.id):
+        await cb.answer("Нет доступа", show_alert=True)
+        return
+
+    user_id = int(cb.data.split("_")[1])
+    user = db.get_user(user_id)
+    db.reject_user(user_id)
+
+    await cb.message.edit_text(
+        f"🚫 Доступ забран: <b>{user['full_name'] if user else user_id}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👥 К списку", callback_data="manage_users")]
+        ])
+    )
+
+    try:
+        await bot.send_message(user_id, "🚫 <b>Ваш доступ был отозван.</b>\nСвяжитесь с руководителем для уточнений.")
     except Exception:
         pass
 
@@ -413,11 +440,34 @@ async def cb_manage_users(cb: CallbackQuery):
             text=f"✅ Принять {u['full_name'][:20]}",
             callback_data=f"approve_{u['telegram_id']}"
         )])
+    for u in approved:
+        rows.append([InlineKeyboardButton(
+            text=f"✏️ {u['full_name'][:25]}",
+            callback_data=f"edituser_{u['telegram_id']}"
+        )])
     rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data="menu")])
 
     await cb.message.edit_text(
         "\n".join(lines),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+    )
+
+
+@router.callback_query(F.data.startswith("edituser_"))
+async def cb_edit_user(cb: CallbackQuery):
+    if not db.is_owner(cb.from_user.id):
+        await cb.answer("Нет доступа", show_alert=True)
+        return
+
+    user_id = int(cb.data.split("_")[1])
+    user = db.get_user(user_id)
+    current = db.get_user_projects(user_id)
+
+    await cb.message.edit_text(
+        f"✏️ <b>Изменить доступ: {user['full_name'] if user else user_id}</b>\n\n"
+        f"Текущие проекты: {', '.join(PROJECTS[p]['name'] for p in current if p in PROJECTS) or '—'}\n\n"
+        f"Выберите новые проекты:",
+        reply_markup=kb_select_projects(user_id, list(current))
     )
 
 
