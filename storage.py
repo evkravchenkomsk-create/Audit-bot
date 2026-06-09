@@ -1,153 +1,153 @@
 """
-Хранилище данных аудита (JSON-файлы)
-В продакшне можно заменить на SQLite или PostgreSQL
+Хранилище данных трекера (JSON-файлы)
+Таблицы: diary, habits, habit_done, tasks, finance, moods
 """
-
 import json
 import os
 import uuid
 from datetime import datetime
 from typing import Optional
 
-from data import AUDIT_BLOCKS
-
-
-class AuditStorage:
-    def __init__(self, data_dir: str = "audit_data"):
+class TrackerStorage:
+    def __init__(self, data_dir: str = "tracker_data"):
         self.data_dir = data_dir
         os.makedirs(data_dir, exist_ok=True)
 
-    def _audit_path(self, audit_id: str) -> str:
-        return os.path.join(self.data_dir, f"{audit_id}.json")
+    def _path(self, name: str) -> str:
+        return os.path.join(self.data_dir, f"{name}.json")
 
-    def _user_path(self, user_id: int) -> str:
-        return os.path.join(self.data_dir, f"user_{user_id}.json")
+    def _load(self, name: str, default=None):
+        path = self._path(name)
+        if not os.path.exists(path):
+            return default if default is not None else {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return default if default is not None else {}
 
-    def create_audit(self, user_id: int, company: str) -> str:
-        audit_id = str(uuid.uuid4())[:8]
-        audit_data = {
-            "id": audit_id,
-            "user_id": user_id,
-            "company": company,
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat(),
-            "answers": {},  # block_idx -> q_idx -> {score, comment}
-        }
+    def _save(self, name: str, data):
+        with open(self._path(name), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
-        with open(self._audit_path(audit_id), 'w', encoding='utf-8') as f:
-            json.dump(audit_data, f, ensure_ascii=False, indent=2)
+    def _uid(self) -> str:
+        return str(uuid.uuid4())[:8]
 
-        # Register in user's audit list
-        user_audits = self._load_user_audits(user_id)
-        user_audits.append({
-            "id": audit_id,
-            "company": company,
-            "created_at": audit_data["created_at"]
+    # ══ DIARY ══
+    def get_diary(self, user_id: int) -> list:
+        data = self._load(f"diary_{user_id}", [])
+        return data if isinstance(data, list) else []
+
+    def add_diary(self, user_id: int, text: str, mood: int = 3):
+        entries = self.get_diary(user_id)
+        entries.append({
+            "id": self._uid(),
+            "text": text,
+            "mood": mood,
+            "created_at": datetime.now().isoformat()
         })
-        with open(self._user_path(user_id), 'w', encoding='utf-8') as f:
-            json.dump(user_audits, f, ensure_ascii=False, indent=2)
+        self._save(f"diary_{user_id}", entries)
 
-        return audit_id
+    def delete_diary(self, user_id: int, entry_id: str):
+        entries = [e for e in self.get_diary(user_id) if e["id"] != entry_id]
+        self._save(f"diary_{user_id}", entries)
 
-    def get_audit(self, audit_id: str) -> Optional[dict]:
-        path = self._audit_path(audit_id)
-        if not os.path.exists(path):
-            return None
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+    # ══ MOODS ══
+    def get_moods(self, user_id: int) -> dict:
+        return self._load(f"moods_{user_id}", {})
 
-    def _save_audit(self, audit: dict):
-        audit["updated_at"] = datetime.now().isoformat()
-        with open(self._audit_path(audit["id"]), 'w', encoding='utf-8') as f:
-            json.dump(audit, f, ensure_ascii=False, indent=2)
+    def set_mood(self, user_id: int, date_str: str, mood: int):
+        moods = self.get_moods(user_id)
+        moods[date_str] = mood
+        self._save(f"moods_{user_id}", moods)
 
-    def save_answer(self, audit_id: str, block_idx: int, q_idx: int, score: int):
-        audit = self.get_audit(audit_id)
-        if not audit:
-            return
+    # ══ HABITS ══
+    def get_habits(self, user_id: int) -> list:
+        data = self._load(f"habits_{user_id}", [])
+        return data if isinstance(data, list) else []
 
-        block_key = str(block_idx)
-        q_key = str(q_idx)
+    def add_habit(self, user_id: int, name: str, icon: str, goal: int, unit: str):
+        habits = self.get_habits(user_id)
+        habits.append({
+            "id": self._uid(),
+            "name": name,
+            "icon": icon,
+            "goal": goal,
+            "unit": unit,
+            "created_at": datetime.now().isoformat()
+        })
+        self._save(f"habits_{user_id}", habits)
 
-        if block_key not in audit["answers"]:
-            audit["answers"][block_key] = {}
+    def delete_habit(self, user_id: int, habit_id: str):
+        habits = [h for h in self.get_habits(user_id) if h["id"] != habit_id]
+        self._save(f"habits_{user_id}", habits)
+        # Clean up done records
+        done = self._load(f"habit_done_{user_id}", {})
+        done.pop(habit_id, None)
+        self._save(f"habit_done_{user_id}", done)
 
-        if q_key not in audit["answers"][block_key]:
-            audit["answers"][block_key][q_key] = {}
+    def is_habit_done(self, habit_id: str, date_str: str) -> bool:
+        # We need user_id but habit_id is enough for cross-user lookup
+        # Store done per habit_id globally
+        done = self._load(f"hdone_{habit_id}", [])
+        return date_str in done
 
-        audit["answers"][block_key][q_key]["score"] = score
-        self._save_audit(audit)
+    def toggle_habit_done(self, habit_id: str, user_id: int, date_str: str):
+        done = self._load(f"hdone_{habit_id}", [])
+        if date_str in done:
+            done.remove(date_str)
+        else:
+            done.append(date_str)
+        self._save(f"hdone_{habit_id}", done)
 
-    def save_comment(self, audit_id: str, block_idx: int, q_idx: int, comment: str):
-        audit = self.get_audit(audit_id)
-        if not audit:
-            return
+    # ══ TASKS ══
+    def get_tasks(self, user_id: int) -> list:
+        data = self._load(f"tasks_{user_id}", [])
+        return data if isinstance(data, list) else []
 
-        block_key = str(block_idx)
-        q_key = str(q_idx)
+    def add_task(self, user_id: int, text: str, task_type: str, due: str = ""):
+        tasks = self.get_tasks(user_id)
+        tasks.append({
+            "id": self._uid(),
+            "text": text,
+            "type": task_type,
+            "due": due,
+            "done": False,
+            "created_at": datetime.now().isoformat()
+        })
+        self._save(f"tasks_{user_id}", tasks)
 
-        if block_key not in audit["answers"]:
-            audit["answers"][block_key] = {}
-        if q_key not in audit["answers"][block_key]:
-            audit["answers"][block_key][q_key] = {}
+    def toggle_task_done(self, user_id: int, task_id: str):
+        tasks = self.get_tasks(user_id)
+        for t in tasks:
+            if t["id"] == task_id:
+                t["done"] = not t.get("done", False)
+                break
+        self._save(f"tasks_{user_id}", tasks)
 
-        audit["answers"][block_key][q_key]["comment"] = comment
-        self._save_audit(audit)
+    def delete_task(self, user_id: int, task_id: str):
+        tasks = [t for t in self.get_tasks(user_id) if t["id"] != task_id]
+        self._save(f"tasks_{user_id}", tasks)
 
-    def get_block_answers(self, audit_id: str, block_idx: int) -> dict:
-        audit = self.get_audit(audit_id)
-        if not audit:
-            return {}
-        return audit.get("answers", {}).get(str(block_idx), {})
+    # ══ FINANCE ══
+    def get_finance(self, user_id: int) -> list:
+        data = self._load(f"finance_{user_id}", [])
+        return data if isinstance(data, list) else []
 
-    def get_completed_blocks(self, audit_id: str) -> list:
-        """Блок считается завершённым, если отвечены все вопросы"""
-        audit = self.get_audit(audit_id)
-        if not audit:
-            return []
-        completed = []
-        for i, block in enumerate(AUDIT_BLOCKS):
-            answers = audit.get("answers", {}).get(str(i), {})
-            if len(answers) >= len(block["questions"]):
-                completed.append(i)
-        return completed
+    def add_finance(self, user_id: int, fin_type: str, amount: float,
+                    currency: str, category: str, description: str):
+        records = self.get_finance(user_id)
+        records.append({
+            "id": self._uid(),
+            "type": fin_type,
+            "amount": amount,
+            "currency": currency,
+            "category": category,
+            "description": description,
+            "created_at": datetime.now().isoformat()
+        })
+        self._save(f"finance_{user_id}", records)
 
-    def get_total_score(self, audit_id: str) -> tuple[int, int]:
-        audit = self.get_audit(audit_id)
-        if not audit:
-            return 0, 0
-
-        total = 0
-        for block_key, block_answers in audit.get("answers", {}).items():
-            for q_key, answer in block_answers.items():
-                total += answer.get("score", 0)
-
-        max_total = sum(b["max"] for b in AUDIT_BLOCKS)
-        return total, max_total
-
-    def get_block_score(self, audit_id: str, block_idx: int) -> int:
-        answers = self.get_block_answers(audit_id, block_idx)
-        return sum(a.get("score", 0) for a in answers.values())
-
-    def get_stop_factors(self, audit_id: str) -> list:
-        """Возвращает список отмеченных стоп-факторов"""
-        audit = self.get_audit(audit_id)
-        if not audit:
-            return []
-        return audit.get("stop_factors", [])
-
-    def _load_user_audits(self, user_id: int) -> list:
-        path = self._user_path(user_id)
-        if not os.path.exists(path):
-            return []
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-
-    def get_user_audits(self, user_id: int) -> list:
-        return self._load_user_audits(user_id)
-
-    def get_all_answers(self, audit_id: str) -> dict:
-        audit = self.get_audit(audit_id)
-        if not audit:
-            return {}
-        return audit.get("answers", {})
+    def delete_finance(self, user_id: int, record_id: str):
+        records = [r for r in self.get_finance(user_id) if r["id"] != record_id]
+        self._save(f"finance_{user_id}", records)
